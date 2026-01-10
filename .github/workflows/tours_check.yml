@@ -19,10 +19,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests
-          # Если используешь playwright в будущем, раскомментируй:
-          # pip install playwright
-          # playwright install chromium
+          pip install -r requirements.txt
+          playwright install chromium  # <--- ЭТА СТРОКА ОБЯЗАТЕЛЬНА!
 
       - name: Run script
         env:
