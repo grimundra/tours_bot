@@ -1,143 +1,100 @@
-import time
-import re
+import os
 import requests
-from datetime import datetime, timedelta
-from playwright.sync_api import sync_playwright
-from supabase import create_client, Client
+import time
+from datetime import datetime
 
-# --- КОНФИГУРАЦИЯ ---
-SUPABASE_URL = "ТВОЙ_SUPABASE_URL"
-SUPABASE_KEY = "ТВОЙ_SUPABASE_SERVICE_ROLE_KEY"
-TG_BOT_TOKEN = "ТВОЙ_TG_TOKEN"
-TG_CHAT_ID = "ТВОЙ_CHAT_ID"
+# --- КОНФИГУРАЦИЯ И СЕКРЕТЫ ---
 
-# Инициализация Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Получаем ключи из переменных окружения (GitHub Secrets)
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
+PARTNER_API_KEY = os.getenv('PARTNER_API_KEY') # Если используется API партнерки (например, Travelata/Level.Travel)
 
-# Направления (Словарь: Город вылета -> Список направлений)
-# Можно расширять
-ROUTES = {
-    "Москва": ["Дубай", "ОАЭ", "Таиланд", "Турция"],
-    "Санкт-Петербург": ["ОАЭ", "Турция"]
+# Проверка наличия ключей (чтобы не упало тихо)
+if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+    raise ValueError("❌ Ошибка: Не найдены секретные ключи (TELEGRAM_BOT_TOKEN или TELEGRAM_CHANNEL_ID)")
+
+# --- НАСТРОЙКИ ПОИСКА ---
+
+# Города вылета (Код IATA : Название)
+DEPARTURE_CITIES = {
+    "MOW": "Москва",
+    "LED": "Санкт-Петербург",
+    "SVX": "Екатеринбург",
+    "KZN": "Казань",
+    "OVB": "Новосибирск",
+    "AER": "Сочи",
+    "UFA": "Уфа",
+    "KUF": "Самара"
 }
 
-DURATIONS = [7, 10] # Сколько ночей смотреть
+# Страны / Направления назначения
+DESTINATIONS = [
+    "Турция",
+    "Египет",
+    "ОАЭ",
+    "Таиланд",
+    "Шри-Ланка",
+    "Россия",     # Можно уточнить (Сочи, Калининград)
+    "Абхазия",
+    "Куба",
+    "Мальдивы"
+]
 
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
+# --- ЛОГИКА ---
+
+def search_tours(departure_code, destination_name):
+    """
+    Имитация или реальный запрос к API поиска туров.
+    Здесь должна быть логика запроса к сайту-донору или API.
+    """
+    print(f"🔍 Ищу туры: {DEPARTURE_CITIES[departure_code]} -> {destination_name}...")
+    
+    # ПРИМЕР: Здесь ты подставишь реальный URL и параметры
+    # params = {
+    #     'from': departure_code,
+    #     'to': destination_name,
+    #     'key': PARTNER_API_KEY
+    # }
+    # response = requests.get('URL_ПАРТНЕРКИ', params=params)
+    # return response.json()
+    
+    return [] # Пока возвращаем пустой список
+
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHANNEL_ID,
+        "text": text,
+        "parse_mode": "HTML"
+    }
     try:
-        requests.post(url, json={"chat_id": TG_CHAT_ID, "text": text, "parse_mode": "Markdown"})
+        response = requests.post(url, json=payload)
+        if response.status_code != 200:
+            print(f"Ошибка отправки в Telegram: {response.text}")
     except Exception as e:
-        print(f"Ошибка отправки в TG: {e}")
+        print(f"Сбой сети: {e}")
 
-def check_history_and_alert(origin, dest, duration, current_price, date_found):
-    """
-    Смотрит цены за последние 3 дня в базе.
-    Если текущая цена ниже средней хотя бы на 1% — шлет алерт.
-    """
-    three_days_ago = (datetime.utcnow() - timedelta(days=3)).isoformat()
+def main():
+    print(f"🚀 Запуск парсера VOLAGO: {datetime.now()}")
     
-    # Запрос к Supabase: берем цены по этому маршруту за 3 дня
-    response = supabase.table("tour_prices") \
-        .select("min_price") \
-        .eq("origin_city", origin) \
-        .eq("destination", dest) \
-        .eq("duration", duration) \
-        .gte("created_at", three_days_ago) \
-        .execute()
-    
-    history = [item['min_price'] for item in response.data]
-    
-    # Логика анализа
-    if not history:
-        print(f"  -> Первая запись для {dest}, просто сохраняем.")
-        return
-
-    avg_price = sum(history) / len(history)
-    
-    # Условие: Текущая цена < Средней * 0.99 (то есть ниже на 1%)
-    if current_price < (avg_price * 0.99):
-        drop_percent = round((1 - current_price / avg_price) * 100, 1)
-        msg = (
-            f"🔥 **Цена упала на {drop_percent}%!**\n"
-            f"✈️ {origin} -> {dest} ({duration} н.)\n"
-            f"💰 Сейчас: **{current_price} ₽** (Вылет: {date_found})\n"
-            f"📊 Средняя (3 дня): {int(avg_price)} ₽"
-        )
-        send_telegram(msg)
-        print(f"  -> АЛЕРТ ОТПРАВЛЕН! Цена {current_price} ниже средней {avg_price}")
-    else:
-        print(f"  -> Цена обычная. Текущая: {current_price}, Средняя: {int(avg_price)}")
-
-def run_scanner():
-    with sync_playwright() as p:
-        # headless=True, чтобы браузер не мешал (работал в фоне)
-        browser = p.chromium.launch(headless=False) 
-        page = browser.new_page()
-        
-        # Чтобы сайт думал, что мы человек
-        page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36..."})
-
-        for origin, destinations in ROUTES.items():
-            for dest in destinations:
-                for nights in DURATIONS:
-                    try:
-                        print(f"🔎 Проверяем: {origin} -> {dest}, {nights} ночей")
-                        
-                        page.goto("https://onlinetours.ru/", timeout=60000)
-                        
-                        # --- ЛОГИКА ВЗАИМОДЕЙСТВИЯ С САЙТОМ (ПРИМЕРНАЯ) ---
-                        # 1. Ввод города вылета
-                        # Тебе нужно найти актуальные селекторы input'ов
-                        # page.fill("input[name='start_from']", origin)
-                        # page.click(f"text={origin}")
-                        
-                        # 2. Ввод направления (Дубай/ОАЭ)
-                        # page.fill("input[name='country']", dest)
-                        # page.wait_for_selector(".autocomplete-result")
-                        # page.click(".autocomplete-result:first-child") 
-                        
-                        # 3. Выбор длительности (nights)
-                        # ... клики по дропдауну длительности ...
-                        
-                        # 4. Открытие календаря цен
-                        # page.click(".datepicker-trigger")
-                        # page.wait_for_selector(".day-price-value") # Ждем загрузки цифр
-
-                        # --- ЭМУЛЯЦИЯ ПОЛУЧЕНИЯ ЦЕНЫ (Тут будет твой парсинг) ---
-                        # Допустим, мы спарсили цены со страницы
-                        # prices_elements = page.query_selector_all(".day-price-value")
-                        # real_prices = [int(el.inner_text().replace(" ", "")) for el in prices_elements]
-                        # min_price = min(real_prices)
-                        
-                        # --- ЗАГЛУШКА ДЛЯ ТЕСТА (Удали это, когда настроишь селекторы) ---
-                        import random
-                        min_price = random.randint(40000, 60000) 
-                        date_found = "25.10"
-                        time.sleep(2)
-                        # --------------------------------------------------------
-
-                        # 5. Сохранение в Supabase
-                        data = {
-                            "origin_city": origin,
-                            "destination": dest,
-                            "duration": nights,
-                            "min_price": min_price,
-                            "departure_date_found": date_found
-                        }
-                        supabase.table("tour_prices").insert(data).execute()
-                        
-                        # 6. Проверка на скидку
-                        check_history_and_alert(origin, dest, nights, min_price, date_found)
-
-                    except Exception as e:
-                        print(f"❌ Ошибка на маршруте {origin}-{dest}: {e}")
-                        # Делаем скриншот ошибки для отладки
-                        page.screenshot(path=f"error_{origin}_{dest}.png")
-        
-        browser.close()
+    # Перебираем все комбинации городов и стран
+    for dep_code, dep_name in DEPARTURE_CITIES.items():
+        for dest in DESTINATIONS:
+            
+            # 1. Поиск
+            deals = search_tours(dep_code, dest)
+            
+            # 2. Обработка найденного (пример)
+            if deals:
+                for deal in deals:
+                    # Тут формируем сообщение
+                    msg = f"🔥 <b>Найдена находка!</b>\n\n✈️ {dep_name} -> {dest}\n💰 Цена: {deal['price']} руб."
+                    send_telegram_message(msg)
+                    time.sleep(2) # Пауза, чтобы не спамить в API телеграма
+            
+            # Небольшая пауза между запросами к источнику, чтобы не забанили IP
+            time.sleep(1) 
 
 if __name__ == "__main__":
-    print("🚀 Запуск сканера цен...")
-    run_scanner()
-    print("✅ Готово.")
+    main()
