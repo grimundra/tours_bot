@@ -68,82 +68,88 @@ def run_search(page, city, country, duration):
         # 1. Заходим на главную
         page.goto("https://www.onlinetours.ru/", timeout=60000)
         
-        # --- ШАГ 1: ГОРОД ВЫЛЕТА ---
-        # Ищем поле, где написано "Москва" или "Вылет из..."
-        # Обычно это первый элемент .SearchPanel-departCity или похожий
-        # Чтобы не гадать с классами, кликнем по тексту текущего города или "Вылет"
+        # Клик в пустоту, чтобы закрыть возможные приветственные баннеры
         try:
-            # Ищем кнопку вылета (она обычно первая в панели)
+            page.mouse.click(10, 10)
+        except: pass
+
+        # --- ШАГ 1: ГОРОД ВЫЛЕТА ---
+        try:
+            # Ищем кнопку вылета
             depart_btn = page.locator("div[class*='departCity'], div[class*='DepartCity']").first
-            depart_btn.click()
-            # Выбираем город из списка
-            page.get_by_text(city, exact=True).first.click()
+            # FORCE CLICK!
+            depart_btn.click(force=True) 
+            
+            # Выбираем город (здесь force не обязателен, список обычно сверху, но добавим)
+            city_option = page.get_by_text(city, exact=True).first
+            if city_option.is_visible():
+                city_option.click(force=True)
+            else:
+                # Если города нет в быстром списке, пропускаем смену (значит он уже стоит или список другой)
+                pass
         except:
-            print("   ⚠️ Не удалось выбрать город (возможно, уже стоит верный).")
+            pass # Иногда город уже выбран верно
 
         # --- ШАГ 2: КУДА (СТРАНА) ---
         # Ищем инпут "Куда"
         dest_input = page.locator("input[placeholder*='Страна'], input[placeholder*='курорт']")
-        dest_input.click()
+        
+        # FORCE CLICK! Игнорируем перекрытия
+        dest_input.click(force=True)
+        
+        dest_input.fill("") # Очищаем
+        time.sleep(0.5)
         dest_input.fill(country)
-        time.sleep(1)
-        # Жмем Enter (выбираем первый вариант в подсказке)
+        time.sleep(1.5) # Ждем подсказку
+        
+        # Жмем Enter
         page.keyboard.press("Enter")
         time.sleep(1)
 
-        # --- ШАГ 3: НОЧЕЙ (САМОЕ ВАЖНОЕ) ---
-        # Ищем поле ночей. Обычно там написано "7-14 ночей" или иконка луны.
-        # Мы найдем его по тексту "ночей" или "ночи"
+        # --- ШАГ 3: НОЧЕЙ ---
         print(f"   🌙 Выставляю длительность: {duration}...")
         
-        # Кликаем на поле ночей
+        # Находим кнопку ночей. Ищем блок, содержащий текст "ноч"
         nights_btn = page.locator("div").filter(has_text=re.compile(r"\d+\s*-\s*\d+\s*ноч")).last
         if not nights_btn.is_visible():
-             # Резервный вариант: ищем просто элемент, который идет ПОСЛЕ поля страны
              nights_btn = page.locator(".SearchPanel-nights, .search-panel-nights").first
         
-        nights_btn.click()
+        # FORCE CLICK!
+        nights_btn.click(force=True)
         time.sleep(1)
 
-        # В открывшемся попапе ищем инпуты "от" и "до"
-        # Обычно они имеют type="number" или placeholder "от"
-        # Ставим точное количество: от 6 до 6
-        
-        # Очищаем и пишем в "От"
+        # Вписываем цифры
         input_from = page.locator("input[class*='min'], input[class*='Min']").first
-        input_from.click()
+        input_from.click(force=True)
         input_from.fill(str(duration))
         
-        # Очищаем и пишем в "До"
         input_to = page.locator("input[class*='max'], input[class*='Max']").first
-        input_to.click()
+        input_to.click(force=True)
         input_to.fill(str(duration))
         
-        # Закрываем попап кликом в заголовок или свободное место
-        page.locator("body").click(position={"x": 0, "y": 0})
+        # Закрываем попап (клик в шапку сайта)
+        page.mouse.click(200, 10)
         time.sleep(1)
 
-        # --- ШАГ 4: ОТКРЫВАЕМ КАЛЕНДАРЬ (ДАТА) ---
+        # --- ШАГ 4: ОТКРЫВАЕМ КАЛЕНДАРЬ ---
         print("   📅 Открываю календарь...")
-        # Ищем поле даты
         date_btn = page.locator(".SearchPanel-date, .search-panel-date").first
-        date_btn.click()
         
-        # Ждем загрузки твоих зеленых ценников
-        # Класс text-emerald-600 (как ты прислал)
+        # FORCE CLICK!
+        date_btn.click(force=True)
+        
+        # Ждем загрузки зеленых ценников
         try:
-            page.wait_for_selector(".text-emerald-600", timeout=10000)
+            page.wait_for_selector(".text-emerald-600", timeout=12000)
         except:
-            print("   ⚠️ Ценники не прогрузились.")
+            print("   ⚠️ Ценники не прогрузились (таймаут).")
             return
 
         # --- ШАГ 5: ПАРСИНГ ---
-        # Собираем все видимые зеленые цены
         prices_elements = page.locator(".text-emerald-600").all_inner_texts()
         
         valid_prices = []
         for p in prices_elements:
-            # Чистим "74 711\n₽" -> 74711
             clean = re.sub(r'[^0-9]', '', p)
             if clean:
                 val = int(clean)
@@ -159,9 +165,6 @@ def run_search(page, city, country, duration):
         # --- ШАГ 6: БД И ТЕЛЕГРАМ ---
         last_price = get_last_price(city, country, duration)
         save_price(city, country, duration, min_price)
-        
-        # Формируем ссылку (хоть она и динамическая, дадим ссылку на поиск, пользователь сам нажмет)
-        # Или текущий URL, если он изменился
         current_url = page.url
         
         if last_price:
@@ -190,24 +193,21 @@ def run_search(page, city, country, duration):
         print(f"   ❌ Ошибка: {e}")
 
 def main():
-    print(f"🚀 VOLAGO BOT STARTED: {datetime.now()}")
+    print(f"🚀 VOLAGO BOT STARTED (FORCE MODE): {datetime.now()}")
     with sync_playwright() as p:
-        # Запускаем браузер
         browser = p.chromium.launch(
             headless=True,
             args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox']
         )
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
-        # Скрываем автоматизацию
         context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
-        
         page = context.new_page()
 
         for city in CITIES_FROM:
             for country in COUNTRIES_TO:
                 for duration in DURATIONS:
                     run_search(page, city, country, duration)
-                    time.sleep(2) # Пауза между запросами
+                    time.sleep(2)
 
         browser.close()
 
