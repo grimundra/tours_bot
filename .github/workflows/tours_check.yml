@@ -2,9 +2,8 @@ name: Daily Tour Check
 
 on:
   schedule:
-    # Запуск каждые 6 часов (в 00:00, 06:00, 12:00, 18:00 UTC)
-    - cron: '0 */6 * * *'
-  workflow_dispatch: # Возможность запустить кнопку вручную
+    - cron: '0 */6 * * *' # Каждые 6 часов
+  workflow_dispatch:      # Кнопка ручного запуска
 
 jobs:
   check-prices:
@@ -20,13 +19,22 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          playwright install chromium
+          pip install requests
+          # Если используешь playwright в будущем, раскомментируй:
+          # pip install playwright
+          # playwright install chromium
 
       - name: Run script
         env:
+          # --- МАГИЯ ЗДЕСЬ ---
+          # СЛЕВА: имя переменной внутри Python (как в main.py)
+          # СПРАВА: имя твоего секрета в GitHub
+          
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TG_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TG_CHAT_ID }}
+          
+          # Если код (main.py) использует Supabase, оставь это:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TG_BOT_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          
         run: python main.py
