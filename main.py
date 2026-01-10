@@ -10,15 +10,11 @@ from playwright.sync_api import sync_playwright
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 
-# Города вылета (текст должен точно совпадать с тем, что в меню Onlinetours)
-CITIES_FROM = ["Москва", "Санкт-Петербург"] 
-
-# Куда летим
-COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд"]
+CITIES_FROM = ["Москва"] # Пока оставим один город для теста
+COUNTRIES_TO = ["Турция", "Египет"]
 
 def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN:
-        print("⚠️ Токен телеграма не задан, сообщение не отправлено.")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"}
@@ -27,111 +23,139 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"❌ Ошибка отправки в Telegram: {e}")
 
-def check_prices_on_homepage(page, city_from, country_to):
+def check_prices_smart(page, city_from, country_to):
     print(f"🔄 Проверка: {city_from} -> {country_to}")
     
     try:
         # 1. Заходим на главную
         page.goto("https://www.onlinetours.ru/", timeout=60000)
         
-        # Ждем загрузки основного поиска
-        # Ищем поле "Откуда" (обычно там написано "Москва" или другой город)
-        page.wait_for_selector(".SearchPanel-departCity", state="visible", timeout=15000)
-
-        # --- ШАГ 1: ВЫБОР ГОРОДА ВЫЛЕТА ---
-        depart_btn = page.locator(".SearchPanel-departCity")
-        current_city = depart_btn.inner_text().strip()
+        # ДИАГНОСТИКА: Что видит робот?
+        page_title = page.title()
+        print(f"   👀 Заголовок страницы: '{page_title}'")
         
-        if city_from not in current_city:
-            print(f"   📍 Меняю город с {current_city} на {city_from}")
-            depart_btn.click()
-            # Ждем появления списка городов
-            page.wait_for_selector(".DepartCityPicker-item", state="visible")
-            # Кликаем на нужный город по тексту
-            page.get_by_text(city_from, exact=True).first.click()
-            time.sleep(1) # Даем интерфейсу продуматься
+        # Если нас забанили, заголовок обычно странный
+        if "Just a moment" in page_title or "Access denied" in page_title:
+            print("   ⛔️ НАС ЗАБЛОКИРОВАЛИ (Cloudflare/Anti-bot).")
+            return None
 
-        # --- ШАГ 2: ВЫБОР "КУДА" ---
-        # Кликаем в поле ввода направления
-        dest_input = page.locator("input[placeholder='Страна, курорт или отель']")
+        # Ждем загрузки любого текста, похожего на интерфейс
+        # Ждем поле "Куда" (оно есть всегда)
+        try:
+            # Ищем input с placeholder "Страна, курорт или отель"
+            page.wait_for_selector("input[placeholder*='Страна']", timeout=10000)
+        except:
+            print("   ⚠️ Не вижу поле поиска. Возможно, мобильная версия или другая верстка.")
+            # Делаем скриншот ошибки (виртуально, чтобы понимать логику)
+            return None
+
+        # --- ШАГ 1: ВВОДИМ "КУДА" (Это надежнее, чем менять город) ---
+        # Сразу кликаем в поле назначения
+        dest_input = page.locator("input[placeholder*='Страна']")
         dest_input.click()
-        # Очищаем и пишем страну
-        dest_input.fill("")
-        time.sleep(0.5)
-        dest_input.type(country_to, delay=100) # Печатаем по буквам, как человек
-        
-        # Ждем подсказок (Suggest)
-        page.wait_for_selector(".Suggest-group", state="visible", timeout=5000)
+        dest_input.fill(country_to)
         time.sleep(1)
-        # Жмем Enter, чтобы выбрать первый вариант (обычно это сама страна)
+        
+        # Ждем подсказку и жмем Enter
         page.keyboard.press("Enter")
+        time.sleep(1)
+
+        # --- ШАГ 2: ОТКРЫВАЕМ КАЛЕНДАРЬ ---
+        # Вместо поиска по классу, ищем по иконке календаря или тексту даты
+        # Часто там написано "Дата вылета" или текущая дата.
+        # Попробуем кликнуть на блок, который идет ПОСЛЕ поля "Куда".
         
-        # --- ШАГ 3: ОТКРЫТИЕ КАЛЕНДАРЯ И ПОИСК ЦЕН ---
-        print("   📅 Открываю календарь...")
-        # Кликаем на поле даты
-        page.locator(".SearchPanel-date").click()
+        # Попробуем найти элемент, содержащий цифры (дату) или слово "вылета"
+        # Универсальный хак: жмем Tab, пока не попадем на дату? Нет, сложно.
         
-        # Ждем появления цен в календаре. 
-        # У Onlinetours цены в календаре появляются не сразу, крутится лоадер.
-        # Ищем элементы с ценой (обычно класс содержит 'price' или просто текст с '₽')
+        # Попробуем найти календарь по селектору Onlinetours (они редко меняют структуру поиска)
+        # Блок с датой обычно имеет класс SearchPanel-date
+        try:
+            page.locator(".SearchPanel-date").click()
+        except:
+            print("   ⚠️ Не удалось кликнуть на дату. Пробую альтернативный клик.")
+            # Клик по координатам (грубо, но может сработать, если верстка на месте)
+            page.mouse.click(500, 300) 
+
+        # --- ШАГ 3: ЧИТАЕМ ЦЕНЫ ---
+        print("   📅 Жду цены в календаре...")
+        time.sleep(5) # Даем время на подгрузку AJAX
         
-        # Даем 10 секунд на прогрузку цен в ячейках
-        page.wait_for_timeout(4000) 
+        # Ищем любые элементы, похожие на цену (40 000 ₽)
+        # Ищем текст, содержащий знак рубля
+        prices_text = page.locator("body").inner_text()
         
-        # Собираем цены. В календаре Onlinetours цена обычно внутри <div class="Day-price">
-        # Но классы могут меняться, попробуем универсальный селектор по тексту
-        prices_text = page.locator("div[class*='price']").all_inner_texts()
+        # Ищем все вхождения "число + ₽" в тексте страницы
+        # Это "грязный" метод, но он работает, даже если классы сменились
+        found_prices = re.findall(r'(\d[\d\s]*)\s?₽', prices_text)
         
-        # Фильтруем мусор, оставляем только цифры
-        valid_prices = []
-        for p in prices_text:
-            clean = re.sub(r'[^0-9]', '', p)
-            if clean:
-                val = int(clean)
-                if val > 5000: # Отсекаем явно ошибочные мелкие цифры
-                    valid_prices.append(val)
+        clean_prices = []
+        for p in found_prices:
+            clean = int(re.sub(r'\s+', '', p))
+            if clean > 10000 and clean < 500000: # Разумные рамки
+                clean_prices.append(clean)
         
-        if valid_prices:
-            min_price = min(valid_prices)
-            print(f"   ✅ Найдена минимальная цена: {min_price} руб.")
+        if clean_prices:
+            min_price = min(clean_prices)
+            print(f"   ✅ Нашел цены: {clean_prices[:3]}... Мин: {min_price}")
             return min_price
         else:
-            print("   ⚠️ Цены в календаре не прогрузились.")
+            print("   ⚠️ Ценники с знаком '₽' не найдены.")
             return None
 
     except Exception as e:
-        print(f"   ❌ Ошибка в процессе: {e}")
-        # Делаем скриншот ошибки для отладки (сохранится в GitHub Actions Artifacts, если настроить, но пока просто чтобы скрипт не падал)
+        print(f"   ❌ Ошибка: {e}")
         return None
 
 def main():
-    print(f"🚀 Запуск Smart-парсера Onlinetours: {datetime.now()}")
+    print(f"🚀 Запуск STEALTH-парсера Onlinetours: {datetime.now()}")
     
     with sync_playwright() as p:
-        # Запуск браузера
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080}, # Притворяемся большим монитором
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
+        # ЗАПУСК С ХИТРОСТЯМИ (Чтобы не палиться)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                '--disable-blink-features=AutomationControlled', # Скрываем, что мы робот
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-gpu'
+            ]
         )
+        
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080},
+            locale='ru-RU',
+            timezone_id='Europe/Moscow'
+        )
+        
+        # Добавляем скрипт, чтобы скрыть navigator.webdriver (главный палевый флаг)
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
+        
         page = context.new_page()
 
         for city in CITIES_FROM:
             for country in COUNTRIES_TO:
-                
-                price = check_prices_on_homepage(page, city, country)
+                price = check_prices_smart(page, city, country)
                 
                 if price:
                     msg = (
-                        f"🔥 <b>Onlinetours (Календарь):</b>\n"
+                        f"🔥 <b>Onlinetours (Stealth):</b>\n"
                         f"✈️ {city} -> {country}\n"
                         f"💰 <b>от {price:,} руб.</b>\n"
-                        f"📅 Цена найдена в календаре низких цен."
                     )
                     send_telegram_message(msg)
                 
-                # Пауза, чтобы не забанили и сайт "отдохнул"
-                time.sleep(3) 
+                time.sleep(5) 
 
         browser.close()
 
