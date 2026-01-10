@@ -12,9 +12,8 @@ TELEGRAM_CHANNEL_ID = os.getenv('TG_CHAT_ID')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 
-CITIES_FROM = ["Москва", "Санкт-Петербург"]
-COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд"]
-DURATIONS = [6, 7, 9, 10]
+CITIES_FROM = ["Москва", "Санкт-Петербург", "Екатеринбург", "Казань", "Новосибирск", "Сочи", "Уфа", "Самара"]
+COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд", "Куба", "Мальдивы", "Шри-Ланка"]
 
 # Инициализация БД
 supabase: Client = None
@@ -34,14 +33,15 @@ def send_telegram_message(text):
         requests.post(url, json=payload, timeout=10)
     except: pass
 
-def get_last_price(city, country, duration):
+def get_last_price(city, country):
+    # Берем последнюю цену для этого направления (duration ставим 7 как условный дефолт)
     if not supabase: return None
     try:
         response = supabase.table("tour_prices") \
             .select("min_price") \
             .eq("origin_city", city) \
             .eq("destination", country) \
-            .eq("duration", duration) \
+            .eq("duration", 7) \
             .order("created_at", desc=True) \
             .limit(1) \
             .execute()
@@ -49,103 +49,68 @@ def get_last_price(city, country, duration):
     except: pass
     return None
 
-def save_price(city, country, duration, price):
+def save_price(city, country, price):
     if not supabase: return
     try:
+        # Пишем duration = 7, так как это стандартный поиск (7-14 ночей)
         data = {
-            "origin_city": city, "destination": country, "duration": duration,
+            "origin_city": city, "destination": country, "duration": 7,
             "min_price": price, "departure_date_found": datetime.now().strftime("%d.%m.%Y")
         }
         supabase.table("tour_prices").insert(data).execute()
-        print(f"   💾 Saved to DB: {price}")
+        print(f"   💾 Сохранено в БД: {price}")
     except Exception as e:
-        print(f"   ❌ DB Error: {e}")
+        print(f"   ❌ Ошибка БД: {e}")
 
-def run_search(page, city, country, duration):
-    print(f"🔄 Поиск: {city} -> {country} [{duration} ночей]")
+def run_search(page, city, country):
+    print(f"🔄 Поиск: {city} -> {country} (Стандарт)")
     
     try:
         # 1. Заходим на главную
         page.goto("https://www.onlinetours.ru/", timeout=60000)
         
-        # Клик в пустоту, чтобы закрыть возможные приветственные баннеры
-        try:
-            page.mouse.click(10, 10)
+        # Сброс фокуса
+        try: page.mouse.click(0, 0)
         except: pass
 
-        # --- ШАГ 1: ГОРОД ВЫЛЕТА ---
+        # --- ШАГ 1: ГОРОД ---
         try:
-            # Ищем кнопку вылета
-            depart_btn = page.locator("div[class*='departCity'], div[class*='DepartCity']").first
-            # FORCE CLICK!
-            depart_btn.click(force=True) 
-            
-            # Выбираем город (здесь force не обязателен, список обычно сверху, но добавим)
-            city_option = page.get_by_text(city, exact=True).first
-            if city_option.is_visible():
-                city_option.click(force=True)
-            else:
-                # Если города нет в быстром списке, пропускаем смену (значит он уже стоит или список другой)
-                pass
-        except:
-            pass # Иногда город уже выбран верно
+            # Пытаемся кликнуть на текущий город
+            depart_btn = page.locator(".SearchPanel-departCity, .search-panel-depart-city").first
+            if depart_btn.is_visible():
+                depart_btn.click(force=True)
+                # Выбираем новый
+                page.get_by_text(city, exact=True).first.click(force=True)
+        except: 
+            # Если не вышло кликнуть (иногда там просто текст), надеемся что город верный или оставляем как есть
+            pass
 
-        # --- ШАГ 2: КУДА (СТРАНА) ---
-        # Ищем инпут "Куда"
+        # --- ШАГ 2: СТРАНА ---
         dest_input = page.locator("input[placeholder*='Страна'], input[placeholder*='курорт']")
-        
-        # FORCE CLICK! Игнорируем перекрытия
         dest_input.click(force=True)
-        
-        dest_input.fill("") # Очищаем
+        dest_input.fill("")
         time.sleep(0.5)
         dest_input.fill(country)
         time.sleep(1.5) # Ждем подсказку
-        
-        # Жмем Enter
         page.keyboard.press("Enter")
         time.sleep(1)
 
-        # --- ШАГ 3: НОЧЕЙ ---
-        print(f"   🌙 Выставляю длительность: {duration}...")
-        
-        # Находим кнопку ночей. Ищем блок, содержащий текст "ноч"
-        nights_btn = page.locator("div").filter(has_text=re.compile(r"\d+\s*-\s*\d+\s*ноч")).last
-        if not nights_btn.is_visible():
-             nights_btn = page.locator(".SearchPanel-nights, .search-panel-nights").first
-        
-        # FORCE CLICK!
-        nights_btn.click(force=True)
-        time.sleep(1)
+        # --- ШАГ 3: НОЧЕЙ (ПРОПУСКАЕМ!) ---
+        # Оставляем настройки сайта по умолчанию (обычно 7-14)
 
-        # Вписываем цифры
-        input_from = page.locator("input[class*='min'], input[class*='Min']").first
-        input_from.click(force=True)
-        input_from.fill(str(duration))
-        
-        input_to = page.locator("input[class*='max'], input[class*='Max']").first
-        input_to.click(force=True)
-        input_to.fill(str(duration))
-        
-        # Закрываем попап (клик в шапку сайта)
-        page.mouse.click(200, 10)
-        time.sleep(1)
-
-        # --- ШАГ 4: ОТКРЫВАЕМ КАЛЕНДАРЬ ---
+        # --- ШАГ 4: КАЛЕНДАРЬ ---
         print("   📅 Открываю календарь...")
         date_btn = page.locator(".SearchPanel-date, .search-panel-date").first
-        
-        # FORCE CLICK!
         date_btn.click(force=True)
         
-        # Ждем загрузки зеленых ценников
+        # Ждем твои зеленые ценники
         try:
-            page.wait_for_selector(".text-emerald-600", timeout=12000)
+            page.wait_for_selector(".text-emerald-600", timeout=15000)
         except:
-            print("   ⚠️ Ценники не прогрузились (таймаут).")
+            print("   ⚠️ Ценники не прогрузились.")
             return
 
-        # --- ШАГ 5: ПАРСИНГ ---
+        # --- ШАГ 5: СБОР ЦЕН ---
         prices_elements = page.locator(".text-emerald-600").all_inner_texts()
         
         valid_prices = []
@@ -162,9 +127,9 @@ def run_search(page, city, country, duration):
         min_price = min(valid_prices)
         print(f"   ✅ НАЙДЕНО: {min_price} руб.")
 
-        # --- ШАГ 6: БД И ТЕЛЕГРАМ ---
-        last_price = get_last_price(city, country, duration)
-        save_price(city, country, duration, min_price)
+        # --- ШАГ 6: ЛОГИКА ---
+        last_price = get_last_price(city, country)
+        save_price(city, country, min_price)
         current_url = page.url
         
         if last_price:
@@ -173,19 +138,18 @@ def run_search(page, city, country, duration):
                 msg = (
                     f"📉 <b>ЦЕНА УПАЛА!</b>\n"
                     f"✈️ {city} -> {country}\n"
-                    f"🌙 {duration} ночей\n"
                     f"💰 <b>{min_price:,} руб.</b> (было {last_price:,})\n"
                     f"📉 Скидка: {diff} руб.\n"
-                    f"🔗 <a href='{current_url}'>Перейти на сайт</a>"
+                    f"🔗 <a href='{current_url}'>Проверить на сайте</a>"
                 )
                 send_telegram_message(msg)
         else:
+            # Первое обнаружение
             msg = (
                 f"🆕 <b>Найдена цена</b>\n"
                 f"✈️ {city} -> {country}\n"
-                f"🌙 {duration} ночей\n"
                 f"💰 <b>{min_price:,} руб.</b>\n"
-                f"🔗 <a href='{current_url}'>Перейти на сайт</a>"
+                f"🔗 <a href='{current_url}'>Проверить на сайте</a>"
             )
             send_telegram_message(msg)
 
@@ -193,7 +157,7 @@ def run_search(page, city, country, duration):
         print(f"   ❌ Ошибка: {e}")
 
 def main():
-    print(f"🚀 VOLAGO BOT STARTED (FORCE MODE): {datetime.now()}")
+    print(f"🚀 VOLAGO FAST BOT: {datetime.now()}")
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -205,9 +169,8 @@ def main():
 
         for city in CITIES_FROM:
             for country in COUNTRIES_TO:
-                for duration in DURATIONS:
-                    run_search(page, city, country, duration)
-                    time.sleep(2)
+                run_search(page, city, country)
+                time.sleep(2) # Пауза чтобы не забанили
 
         browser.close()
 
