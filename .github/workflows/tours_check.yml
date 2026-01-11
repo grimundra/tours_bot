@@ -2,7 +2,7 @@ name: Daily Tour Check
 
 on:
   schedule:
-    - cron: '0 */8 * * *' # Запуск каждые 4 часа
+    - cron: '0 6,18 * * *' # Запуск в 06:00 и 18:00 UTC (09:00 и 21:00 МСК)
   workflow_dispatch:      # Кнопка ручного запуска
 
 jobs:
@@ -18,17 +18,17 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
+        # Убрали supabase, оставили только нужное
         run: |
-          pip install requests playwright supabase
+          pip install requests playwright
           playwright install chromium
 
       - name: Run script
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python main.py
+          # Ключи базы больше не нужны
+        run: python -u main.py
 
       - name: Upload Artifacts (Screenshots)
         if: always()
