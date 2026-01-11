@@ -62,88 +62,111 @@ def run_search(page, city, country):
     print(f"🔄 Поиск: {city} -> {country}")
     
     try:
-        # 1. Загрузка
+        # 1. Открываем сайт
         page.goto("https://www.onlinetours.ru/", timeout=60000)
         
         # Сброс фокуса (клик в левый верхний угол)
         try: page.mouse.click(0, 0)
         except: pass
 
-        # --- ШАГ 1: ГОРОД ВЫЛЕТА (ИСПРАВЛЕНО) ---
+        # --- ШАГ 1: ГОРОД ВЫЛЕТА (ПО ТЕКСТУ) ---
         try:
-            print(f"   🛫 Выбираю город: {city}...")
-            # Ищем блок города вылета (обычно там написано 'Москва' или 'Вылет из...')
-            depart_widget = page.locator("div[class*='departCity'], div[class*='DepartCity']").first
-            depart_widget.click(force=True)
+            print(f"   🛫 Проверяю город вылета...")
+            # Ищем элемент, который содержит название города (например "Москва")
+            # Обычно он вверху в панели поиска
+            city_btn = page.locator(".SearchPanel-departCity").first
             
-            # После клика фокус должен быть в поле ввода. Пишем город.
-            # Если там старый текст, он сотрется или допишется, но поиск сработает
-            page.keyboard.type(city, delay=100)
-            time.sleep(1.5) # Ждем список
+            # Если не нашли по классу, ищем по тексту текущего города (обычно Москва стоит по дефолту)
+            if not city_btn.is_visible():
+                city_btn = page.get_by_text("Москва", exact=True).first
             
-            # Выбираем стрелкой и Enter
-            page.keyboard.press("ArrowDown")
-            time.sleep(0.5)
-            page.keyboard.press("Enter")
-            
-            # ЗАКРЫВАЕМ СПИСОК (Клик в шапку)
-            page.mouse.click(100, 10)
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"   ⚠️ Ошибка выбора города: {e}")
-            # Не выходим, пробуем продолжить (вдруг город уже верный)
+            # Если нужно сменить город
+            current_text = city_btn.inner_text() if city_btn.is_visible() else ""
+            if city not in current_text:
+                print(f"   ✏️ Меняю {current_text} на {city}...")
+                city_btn.click(force=True)
+                page.keyboard.type(city, delay=100)
+                time.sleep(1)
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+                # Закрываем список кликом в пустоту
+                page.mouse.click(100, 10)
+            else:
+                print(f"   ✅ Город уже стоит верный: {city}")
 
-        # --- ШАГ 2: СТРАНА НАЗНАЧЕНИЯ ---
+        except Exception as e:
+            print(f"   ⚠️ Не удалось сменить город (возможно, уже стоит верный): {e}")
+
+        # --- ШАГ 2: СТРАНА (ПО PLACEHOLDER) ---
         try:
-            print(f"   🌴 Выбираю страну: {country}...")
-            # Ищем input
-            dest_input = page.locator("input[placeholder*='Страна']")
-            dest_input.click(force=True)
-            dest_input.fill("") # Очищаем
-            time.sleep(0.5)
+            print(f"   🌴 Ввожу страну: {country}...")
+            # Самый надежный селектор - плейсхолдер
+            dest_input = page.get_by_placeholder("Страна, курорт, отель")
             
+            dest_input.click(force=True)
+            dest_input.fill("") 
+            time.sleep(0.5)
             dest_input.type(country, delay=100)
             time.sleep(2) # Ждем список
             
-            # Выбираем стрелкой и Enter
+            # Выбираем (Стрелка вниз + Enter)
             page.keyboard.press("ArrowDown")
-            time.sleep(0.5)
             page.keyboard.press("Enter")
             
-            # ЗАКРЫВАЕМ СПИСОК (Клик в шапку)
+            # ЗАКРЫВАЕМ СПИСОК (Важно!)
             page.mouse.click(100, 10)
             time.sleep(1)
             
         except Exception as e:
             print(f"   ❌ Ошибка ввода страны: {e}")
+            page.screenshot(path=f"error_country_{city}.png")
             return
 
-        # --- ШАГ 3: КАЛЕНДАРЬ ---
+        # --- ШАГ 3: КАЛЕНДАРЬ (ПО ТЕКСТУ ИЛИ CSS) ---
         print("   📅 Открываю календарь...")
         
-        try:
-            # Кликаем по кнопке даты
-            page.locator(".SearchPanel-date, .search-panel-date").first.click(force=True)
-        except:
-             # Запасной вариант по координатам (если вдруг кнопка не сработала)
-             print("   ⚠️ Клик по дате не прошел, пробую координаты...")
-             box = page.locator("input[placeholder*='Страна']").bounding_box()
-             if box:
-                 # Смещаемся вправо от поля страны
-                 page.mouse.click(box['x'] + box['width'] + 250, box['y'] + 10)
+        # Убираем опасный клик по координатам (+250px).
+        # Используем список надежных селекторов:
+        
+        calendar_opened = False
+        selectors = [
+            ".SearchPanel-date",       # Стандартный класс
+            ".search-panel-date",      # Альтернативный класс
+            "div[class*='date']"       # Любой див с словом date в классе
+        ]
+        
+        for sel in selectors:
+            try:
+                el = page.locator(sel).first
+                if el.is_visible():
+                    el.click(force=True)
+                    calendar_opened = True
+                    break
+            except: pass
+            
+        if not calendar_opened:
+            print("   ⚠️ Не нашел кнопку календаря по классам. Пробую кликнуть рядом с полем Страны (аккуратно).")
+            # ОЧЕНЬ АККУРАТНЫЙ КЛИК:
+            # Поле "Страна" -> +10 пикселей вправо от его границы. 
+            # (Раньше было +250, это был перебор)
+            box = page.get_by_placeholder("Страна, курорт, отель").bounding_box()
+            if box:
+                # Кликаем чуть правее поля ввода страны. Там обычно начинается поле даты.
+                # Ширина поля страны большая, так что +20px от правого края - это самое начало Даты.
+                page.mouse.click(box['x'] + box['width'] + 20, box['y'] + 20)
 
         # --- ШАГ 4: ЖДЕМ ЗЕЛЕНЫЕ ЦЕНЫ ---
         print("   ⏳ Жду цены...")
         try:
             # Ждем появления класса .text-emerald-600
-            page.wait_for_selector(".text-emerald-600", timeout=15000)
+            page.wait_for_selector(".text-emerald-600", timeout=12000)
         except:
             print("   ⚠️ Цены не появились.")
-            page.screenshot(path=f"error_calendar_{city}_{country}.png")
+            # Снимаем скриншот, чтобы видеть, что открылось на самом деле
+            page.screenshot(path=f"debug_calendar_{country}.png")
             return
 
-        # --- ШАГ 5: ЧИТАЕМ ---
+        # --- ШАГ 5: ПАРСИНГ ---
         prices_elements = page.locator(".text-emerald-600").all_inner_texts()
         
         valid_prices = []
@@ -198,7 +221,7 @@ def run_search(page, city, country):
         except: pass
 
 def main():
-    print(f"🚀 VOLAGO FULL-FIX BOT: {datetime.now()}")
+    print(f"🚀 VOLAGO TEXT-NAVIGATOR: {datetime.now()}")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(
