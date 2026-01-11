@@ -1,12 +1,10 @@
-name: Daily Tour Check
+name: Debug Screenshot Run
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'
-  workflow_dispatch:
+  workflow_dispatch: # Кнопка ручного запуска
 
 jobs:
-  check-prices:
+  debug-visuals:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -19,14 +17,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests playwright supabase
+          pip install playwright
           playwright install chromium
 
-      - name: Run script
-        env:
-          # Теперь имена совпадают и слева (код), и справа (секреты)
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      - name: Run Debug Script
         run: python main.py
+
+      # ЭТО САМЫЙ ВАЖНЫЙ ШАГ СЕЙЧАС:
+      - name: Upload Screenshots
+        if: always() # Выполнять ВСЕГДА, даже при ошибках
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-evidence # Имя архива
+          path: |
+            *.png
+            *.html
