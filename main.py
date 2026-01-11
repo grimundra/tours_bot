@@ -12,10 +12,9 @@ TELEGRAM_CHANNEL_ID = os.getenv('TG_CHAT_ID')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 
-CITIES_FROM = ["Москва", "Санкт-Петербург", "Екатеринбург", "Казань", "Новосибирск", "Сочи", "Уфа", "Самара"]
-COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд", "Куба", "Мальдивы", "Шри-Ланка"]
+CITIES_FROM = ["Москва", "Санкт-Петербург", "Екатеринбург", "Сочи", "Самара", "Нижний Новгород", "Тюмень", "Новосибирск", "Казань", "Уфа"]
+COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд", "Дубай", "Китай", "Вьетнам", "Мальдивы", "Шри-Ланка"] 
 
-# Инициализация БД
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY and "http" in SUPABASE_URL:
     try:
@@ -36,7 +35,6 @@ def send_telegram_message(text):
 def get_last_price(city, country):
     if not supabase: return None
     try:
-        # Берем последнюю цену (duration=0 или 7, неважно, главное сравнить с предыдущим запуском)
         response = supabase.table("tour_prices") \
             .select("min_price") \
             .eq("origin_city", city) \
@@ -52,7 +50,7 @@ def save_price(city, country, price):
     if not supabase: return
     try:
         data = {
-            "origin_city": city, "destination": country, "duration": 7, # Ставим 7 как дефолт
+            "origin_city": city, "destination": country, "duration": 7,
             "min_price": price, "departure_date_found": datetime.now().strftime("%d.%m.%Y")
         }
         supabase.table("tour_prices").insert(data).execute()
@@ -60,128 +58,133 @@ def save_price(city, country, price):
     except Exception as e:
         print(f"   ❌ DB Error: {e}")
 
-def check_prices_smart(page, city_from, country_to):
-    print(f"🔄 Проверка: {city_from} -> {country_to}")
+def run_search(page, city, country):
+    print(f"🔄 Поиск: {city} -> {country}")
     
     try:
-        # 1. Заходим на главную
+        # 1. Открываем сайт
         page.goto("https://www.onlinetours.ru/", timeout=60000)
         
-        # Сброс фокуса (иногда помогает)
+        # Сброс кликом в угол
         try: page.mouse.click(0, 0)
         except: pass
 
         # --- ШАГ 1: ВВОДИМ "КУДА" ---
         try:
+            # Ищем поле назначения
             dest_input = page.locator("input[placeholder*='Страна']")
-            # FORCE CLICK!
             dest_input.click(force=True)
             dest_input.fill("")
             time.sleep(0.5)
-            dest_input.type(country_to, delay=100)
-            time.sleep(2)
+            dest_input.type(country, delay=100)
+            time.sleep(2) # Ждем подсказку
             page.keyboard.press("Enter")
             time.sleep(1)
-        except Exception as e:
-            print(f"   ⚠️ Ошибка ввода страны: {e}")
-            return None
-
-        # --- ШАГ 2: КЛИКАЕМ НА ДАТУ/КАЛЕНДАРЬ ---
-        print("   📅 Пытаюсь открыть календарь...")
-        
-        # Тот самый надежный блок из старого кода
-        try:
-            page.locator(".SearchPanel-date, .search-panel-date").first.click(force=True, timeout=3000)
         except:
-            print("   ⚠️ Клик по классу не прошел, пробую по координатам...")
-            try:
-                # Берем координаты поля ввода страны и кликаем правее
-                box = page.locator("input[placeholder*='Страна']").bounding_box()
-                if box:
-                    # Смещаемся на 400px вправо (там дата)
-                    page.mouse.click(box['x'] + box['width'] + 300, box['y'] + 10)
-            except:
-                print("   ❌ Не смог кликнуть даже по координатам")
+            print("   ❌ Не удалось ввести страну")
+            return
 
-        time.sleep(4) # Ждем прогрузки (побольше)
+        # --- ШАГ 2: ОТКРЫВАЕМ КАЛЕНДАРЬ ---
+        print("   📅 Жму на календарь...")
+        
+        # Строго ищем кнопку даты
+        try:
+            page.locator(".SearchPanel-date, .search-panel-date").first.click(force=True, timeout=5000)
+        except:
+            # Запасной вариант: клик по координатам, ЕСЛИ кнопка не сработала
+            print("   ⚠️ Клик по классу не прошел, пробую координаты...")
+            box = page.locator("input[placeholder*='Страна']").bounding_box()
+            if box:
+                page.mouse.click(box['x'] + box['width'] + 300, box['y'] + 10)
 
-        # --- ШАГ 3: ЧИТАЕМ ЦЕНЫ (СТАРЫЙ НАДЕЖНЫЙ МЕТОД) ---
+        # --- ШАГ 3: ЖДЕМ ИМЕННО ЗЕЛЕНЫЕ ЦЕНЫ ---
+        # Мы НЕ ищем "любые цифры". Мы ждем только класс .text-emerald-600
+        print("   ⏳ Жду загрузки цен (до 15 сек)...")
         
-        content = page.content() # Берем ВЕСЬ HTML код страницы
-        
-        # Ищем любые цифры перед знаком рубля ( > 45 000 ₽ < )
-        # Это найдет и зеленые цены, и черные, любые.
-        found_prices = re.findall(r'(\d[\d\s]*)\s?₽', content)
+        try:
+            # Ждем появления хотя бы одного зеленого ценника
+            page.wait_for_selector(".text-emerald-600", timeout=15000)
+        except:
+            print("   ⚠️ Ценники не появились. Возможно, календарь не открылся.")
+            # Делаем скриншот для отладки (сохранится в Artifacts)
+            page.screenshot(path=f"error_{city}_{country}.png")
+            return
+
+        # --- ШАГ 4: ЧИТАЕМ ТОЛЬКО ЗЕЛЕНЫЕ ЦЕНЫ ---
+        # Берем текст только из элементов с нужным классом
+        price_elements = page.locator(".text-emerald-600").all_inner_texts()
         
         valid_prices = []
-        for p in found_prices:
-            clean = int(re.sub(r'\s+', '', p))
-            # Фильтр: от 10к до 800к
-            if clean > 10000 and clean < 800000:
-                valid_prices.append(clean)
+        for p in price_elements:
+            # p = "45 000 ₽"
+            clean = re.sub(r'[^0-9]', '', p)
+            if clean:
+                val = int(clean)
+                # Фильтр: Цена должна быть больше 15 000 (чтобы точно убрать рассрочки)
+                if val > 15000: 
+                    valid_prices.append(val)
         
-        if valid_prices:
-            min_price = min(valid_prices)
-            print(f"   ✅ Нашел цены: {len(valid_prices)} шт. Мин: {min_price}")
-            
-            # --- ЛОГИКА БД И ТЕЛЕГРАМА ---
-            last_price = get_last_price(city_from, country_to)
-            save_price(city_from, country_to, min_price)
-            
-            if last_price:
-                if min_price < last_price:
-                    diff = last_price - min_price
-                    msg = (
-                        f"📉 <b>ЦЕНА УПАЛА!</b>\n"
-                        f"✈️ {city_from} -> {country_to}\n"
-                        f"💰 <b>{min_price:,} руб.</b> (было {last_price:,})\n"
-                        f"📉 Скидка: {diff} руб."
-                    )
-                    send_telegram_message(msg)
-            else:
-                # Первая запись в базе
+        if not valid_prices:
+            print(f"   ⚠️ Найдены элементы цен, но они пустые или < 15к: {price_elements[:3]}")
+            return
+
+        min_price = min(valid_prices)
+        print(f"   ✅ НАЙДЕНО: {min_price} руб.")
+
+        # --- ШАГ 5: БД И ТЕЛЕГРАМ ---
+        last_price = get_last_price(city, country)
+        
+        # ВАЖНО: Если цена странная (слишком маленькая), лучше проигнорировать
+        if min_price < 12000:
+             print(f"   ⚠️ Цена подозрительно низкая ({min_price}), пропускаю.")
+             return
+
+        save_price(city, country, min_price)
+        current_url = page.url
+        
+        if last_price:
+            if min_price < last_price:
+                diff = last_price - min_price
                 msg = (
-                    f"🆕 <b>Найдена цена</b>\n"
-                    f"✈️ {city_from} -> {country_to}\n"
-                    f"💰 <b>{min_price:,} руб.</b>"
+                    f"📉 <b>ЦЕНА УПАЛА!</b>\n"
+                    f"✈️ {city} -> {country}\n"
+                    f"💰 <b>{min_price:,} руб.</b> (было {last_price:,})\n"
+                    f"📉 Скидка: {diff} руб.\n"
+                    f"🔗 <a href='{current_url}'>На сайт</a>"
                 )
                 send_telegram_message(msg)
-
-            return min_price
+            else:
+                 print(f"   ℹ️ Цена стабильна (было {last_price})")
         else:
-            print(f"   ⚠️ Цены не найдены. (Найдено совпадений в тексте: {len(found_prices)})")
-            return None
+            msg = (
+                f"🆕 <b>Найдена цена</b>\n"
+                f"✈️ {city} -> {country}\n"
+                f"💰 <b>{min_price:,} руб.</b>\n"
+                f"🔗 <a href='{current_url}'>На сайт</a>"
+            )
+            send_telegram_message(msg)
 
     except Exception as e:
         print(f"   ❌ Ошибка: {e}")
-        return None
+        try: page.screenshot(path=f"crash_{city}.png")
+        except: pass
 
 def main():
-    print(f"🚀 VOLAGO OLD-SCHOOL BOT: {datetime.now()}")
+    print(f"🚀 VOLAGO STRICT BOT: {datetime.now()}")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox']
         )
-        
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
-            viewport={'width': 1920, 'height': 1080},
-            locale='ru-RU',
-            timezone_id='Europe/Moscow'
-        )
+        context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
         page = context.new_page()
 
         for city in CITIES_FROM:
-            # Тут мы пропускаем "смену города" на сайте, так как это часто глючит.
-            # Мы просто верим, что Onlinetours сам определит город или покажет цены из Москвы.
-            # (Чтобы менять город надежно, нужна отдельная сложная логика, пока давай запустим так).
-            
             for country in COUNTRIES_TO:
-                check_prices_smart(page, city, country)
-                time.sleep(3) 
+                run_search(page, city, country)
+                time.sleep(2)
 
         browser.close()
 
