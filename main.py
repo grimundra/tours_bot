@@ -9,12 +9,29 @@ from playwright.sync_api import sync_playwright
 TELEGRAM_BOT_TOKEN = os.getenv('TG_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TG_CHAT_ID')
 
-CITIES_FROM = ["Москва", "Санкт-Петербург"]
-COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд"] 
+# Исправил кавычки и привел к стандарту
+CITIES_FROM = [
+    "Москва", "Санкт-Петербург", "Екатеринбург", "Сочи", "Самара", 
+    "Нижний Новгород", "Тюмень", "Новосибирск", "Казань", "Уфа", 
+    "Краснодар", "Владивосток", "Иркутск"
+]
 
+COUNTRIES_TO = [
+    "Турция", "Египет", "ОАЭ", "Таиланд", "Дубай", 
+    "Китай", "Вьетнам", "Мальдивы", "Шри-Ланка", "Стамбул", "Куба"
+]
+
+# Полный набор флагов
 FLAGS = {
-    "Турция": "🇹🇷", "Египет": "🇪🇬", "ОАЭ": "🇦🇪", "Таиланд": "🇹🇭",
-    "Куба": "🇨🇺", "Мальдивы": "🇲🇻", "Шри-Ланка": "🇱🇰"
+    "Турция": "🇹🇷", "Стамбул": "🇹🇷",
+    "Египет": "🇪🇬",
+    "ОАЭ": "🇦🇪", "Дубай": "🇦🇪",
+    "Таиланд": "🇹🇭",
+    "Китай": "🇨🇳",
+    "Вьетнам": "🇻🇳",
+    "Мальдивы": "🇲🇻",
+    "Шри-Ланка": "🇱🇰",
+    "Куба": "🇨🇺"
 }
 
 # --- ФУНКЦИИ ---
@@ -33,72 +50,58 @@ def run_search(page, target_city, target_country):
     try:
         # 1. Загрузка
         page.goto("https://www.onlinetours.ru/", timeout=60000)
-        try: page.mouse.click(0, 0)
+        try: page.mouse.click(0, 0) # Сброс фокуса
         except: pass
 
         # ==========================================
-        # ШАГ 1: ГОРОД ВЫЛЕТА (По плейсхолдеру)
+        # ШАГ 1: ГОРОД ВЫЛЕТА (Input Logic)
         # ==========================================
         try:
-            # Ищем input по твоему коду: placeholder="Город вылета"
             city_input = page.locator("input[placeholder='Город вылета']")
-            
-            # Проверяем текущее значение
             current_val = city_input.input_value()
             
-            # Если там не тот город, что нам нужен (или если там пусто)
+            # Меняем только если город отличается
             if target_city not in current_val:
-                print(f"   🛫 Меняю город: '{current_val}' -> '{target_city}'...")
+                # print(f"   🛫 Меняю город: '{current_val}' -> '{target_city}'...")
                 
-                # Клик (чтобы активировать поле)
                 city_input.click(force=True)
-                
-                # Жесткая очистка (Ctrl+A -> Del)
                 city_input.press("Control+A")
                 city_input.press("Backspace")
                 time.sleep(0.1)
+                city_input.type(target_city, delay=100)
                 
-                # Пишем
-                city_input.type(target_city, delay=150)
-                
-                # Выбор из списка (z-50)
-                print("      ⏳ Жду список городов...")
+                # Ждем список
                 try:
-                    page.wait_for_selector("div.z-50", state="visible", timeout=4000)
+                    page.wait_for_selector("div.z-50", state="visible", timeout=3000)
                     item = page.locator("div.z-50 div.cursor-pointer").first
                     if item.is_visible():
                         item.click(force=True)
-                        print("      🖱️ Кликнул по городу в списке.")
                     else:
-                        print("      ⚠️ Элемент списка не виден, жму Enter.")
                         page.keyboard.press("Enter")
                 except:
-                    print("      ⚠️ Список городов не появился, жму Enter.")
                     page.keyboard.press("Enter")
                 
                 time.sleep(1)
-            else:
-                print(f"   ✅ Город {target_city} уже выбран.")
+            # else:
+            #     print(f"   ✅ Город {target_city} уже выбран.")
 
         except Exception as e:
             print(f"   ⚠️ Ошибка смены города: {e}")
 
         # ==========================================
-        # ШАГ 2: СТРАНА
+        # ШАГ 2: СТРАНА (Input Logic)
         # ==========================================
         try:
-            print(f"   🌴 Ввожу страну: {target_country}...")
-            # Тут тоже используем placeholder (он там 'Страна, курорт...')
-            # Но т.к. это input, ищем просто по тегу input с похожим placeholder
+            # print(f"   🌴 Ввожу страну: {target_country}...")
             dest_input = page.locator("input[placeholder*='Страна']")
             dest_input.click(force=True)
             
             dest_input.press("Control+A")
             dest_input.press("Backspace")
-            dest_input.type(target_country, delay=150)
+            dest_input.type(target_country, delay=100)
             
             try:
-                page.wait_for_selector("div.z-50", state="visible", timeout=5000)
+                page.wait_for_selector("div.z-50", state="visible", timeout=3000)
                 item = page.locator("div.z-50 div.cursor-pointer").first
                 if item.is_visible():
                     item.click(force=True)
@@ -107,7 +110,7 @@ def run_search(page, target_city, target_country):
             except:
                 pass 
 
-            time.sleep(1)
+            time.sleep(0.5)
             page.mouse.click(100, 10) # Закрыть меню
 
         except Exception as e:
@@ -117,7 +120,7 @@ def run_search(page, target_city, target_country):
         # ==========================================
         # ШАГ 3: КАЛЕНДАРЬ
         # ==========================================
-        print("   📅 Открываю календарь...")
+        # print("   📅 Открываю календарь...")
         calendar_opened = False
         
         try:
@@ -131,21 +134,21 @@ def run_search(page, target_city, target_country):
                 calendar_opened = True
             except: pass
         
-        # План Б (координаты) - используем поле страны как ориентир
         if not calendar_opened:
-            print("      ⚠️ Клик по дате через координаты.")
             box = page.locator("input[placeholder*='Страна']").bounding_box()
             if box:
                 page.mouse.click(box['x'] + box['width'] + 20, box['y'] + 20)
 
         # ==========================================
-        # ШАГ 4: ЦЕНЫ
+        # ШАГ 4: ЦЕНЫ (БЫСТРАЯ ПРОВЕРКА)
         # ==========================================
-        print("   ⏳ Жду цены...")
+        # print("   ⏳ Жду цены...")
         try:
-            page.wait_for_selector(".text-emerald-600", timeout=20000)
+            # Уменьшил тайм-аут до 6 секунд!
+            # Если рейсов нет, мы не будем ждать 30 сек на каждом городе.
+            page.wait_for_selector(".text-emerald-600", timeout=6000)
         except:
-            print("   ⚠️ Цены не появились.")
+            print("   ⚠️ Цены не появились (нет рейсов?), пропускаю.")
             return
 
         prices_elements = page.locator(".text-emerald-600").all_inner_texts()
@@ -168,20 +171,22 @@ def run_search(page, target_city, target_country):
         # ==========================================
         
         flag = FLAGS.get(target_country, "🏳️")
+        current_url = page.url
         
         msg = (
             f"{flag} <b>{target_country}</b>\n"
             f"🛫 Вылет: {target_city}\n"
-            f"💰 <b>{min_price:,} руб.</b>"
+            f"💰 <b>{min_price:,} руб.</b>\n"
+            f"🔗 <a href='{current_url}'>Проверить</a>"
         )
         send_telegram_message(msg)
-        print("   📩 Отправлено в Telegram")
+        # print("   📩 Отправлено в Telegram")
 
     except Exception as e:
         print(f"   ❌ Ошибка: {e}")
 
 def main():
-    print(f"🚀 VOLAGO INPUT-FIX: {datetime.now()}")
+    print(f"🚀 VOLAGO PRODUCTION: {datetime.now()}")
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -193,7 +198,8 @@ def main():
         for city in CITIES_FROM:
             for country in COUNTRIES_TO:
                 run_search(page, city, country)
-                time.sleep(3)
+                # Пауза поменьше, чтобы быстрее пройти весь список
+                time.sleep(1)
 
         browser.close()
 
