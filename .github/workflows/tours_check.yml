@@ -3,7 +3,11 @@ name: Daily Tour Check
 on:
   schedule:
     - cron: '0 6,18 * * *' # Запуск в 09:00 и 21:00 МСК
-  workflow_dispatch:      # Ручной запуск
+  workflow_dispatch:      # Кнопка ручного запуска
+
+# ВАЖНО: Разрешаем роботу обновлять файлы (историю цен)
+permissions:
+  contents: write
 
 jobs:
   check-prices:
@@ -27,3 +31,14 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python -u main.py
+
+      # СОХРАНЕНИЕ ИСТОРИИ ЦЕН
+      - name: Commit and push history
+        run: |
+          git config --global user.name 'PriceBot'
+          git config --global user.email 'bot@noreply.github.com'
+          # Если файла еще нет, git add его добавит. Если есть - обновит.
+          git add history.json
+          # Если цены не изменились и коммитить нечего - не падать с ошибкой
+          git commit -m "Update price history" || exit 0
+          git push
