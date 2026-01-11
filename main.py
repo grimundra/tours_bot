@@ -12,9 +12,9 @@ TELEGRAM_CHANNEL_ID = os.getenv('TG_CHAT_ID')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 
-CITIES_FROM = ["Москва", "Санкт-Петербург", "Екатеринбург", "Сочи", "Самара", "Нижний Новгород", "Тюмень", "Новосибирск", "Казань", "Уфа"]
-COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд", "Дубай", "Китай", "Вьетнам", "Мальдивы", "Шри-Ланка"] 
-
+CITIES_FROM = ["Москва", "Санкт-Петербург"]
+# Проверим пока главные направления, чтобы быстрее отладить
+COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд"] 
 
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY and "http" in SUPABASE_URL:
@@ -66,49 +66,58 @@ def run_search(page, city, country):
         # 1. Загрузка
         page.goto("https://www.onlinetours.ru/", timeout=60000)
         
+        # Клик в угол (сброс фокуса, если вылез баннер)
+        try: page.mouse.click(0, 0)
+        except: pass
+
         # --- ШАГ 1: ВВОДИМ СТРАНУ ---
         try:
             # Ищем input
             dest_input = page.locator("input[placeholder*='Страна']")
-            
-            # ЯДЕРНЫЙ КЛИК (JS): Принудительный клик программно
-            page.evaluate("element => element.click()", dest_input.element_handle())
-            
+            dest_input.click(force=True)
             dest_input.fill("")
             time.sleep(0.5)
             dest_input.type(country, delay=100)
             time.sleep(2)
+            
+            # ВАЖНО: Жмем Enter, чтобы выбрать страну из списка подсказок
             page.keyboard.press("Enter")
             time.sleep(1)
         except Exception as e:
             print(f"   ❌ Ошибка ввода страны: {e}")
             return
 
-        # --- ШАГ 2: ОТКРЫВАЕМ КАЛЕНДАРЬ (JS INJECTION) ---
-        print("   📅 Взламываем кнопку календаря через JS...")
+        # --- ШАГ 2: ПЕРЕХОД КЛАВИШАМИ (TAB) ---
+        print("   🎹 Навигация: TAB -> ENTER...")
         
-        try:
-            # Находим элемент даты
-            date_element = page.locator(".SearchPanel-date, .search-panel-date").first
-            
-            # ВЫПОЛНЯЕМ JS ПРЯМО В БРАУЗЕРЕ: "Нажмись!"
-            # Это обходит любые перекрытия
-            page.evaluate("element => element.click()", date_element.element_handle())
-            
-        except Exception as e:
-            print(f"   ⚠️ JS-клик не прошел: {e}")
-            # План Б: Клик по координатам (по центру экрана, так как поиск обычно сверху)
-            page.mouse.click(800, 200)
-
+        # После ввода страны фокус остается в поле. 
+        # Жмем TAB, чтобы перейти к следующему элементу (по логике это Дата)
+        page.keyboard.press("Tab")
+        time.sleep(0.5)
+        
+        # Жмем Enter, чтобы "кликнуть" на то, что выбралось
+        page.keyboard.press("Enter")
+        
         # --- ШАГ 3: ЖДЕМ ЗЕЛЕНЫЕ ЦЕНЫ ---
         print("   ⏳ Жду цены...")
         try:
             # Ждем появления класса .text-emerald-600
-            page.wait_for_selector(".text-emerald-600", timeout=15000)
+            page.wait_for_selector(".text-emerald-600", timeout=10000)
         except:
-            print("   ⚠️ Цены не загрузились.")
-            page.screenshot(path=f"error_{city}_{country}.png")
-            return
+            print("   ⚠️ Цены не появились с первого раза. Пробую нажать Tab еще раз...")
+            # План Б: Возможно, фокус попал не туда (например на крестик очистки поля).
+            # Жмем Tab еще раз и снова Enter
+            page.keyboard.press("Tab")
+            time.sleep(0.5)
+            page.keyboard.press("Enter")
+            
+            try:
+                page.wait_for_selector(".text-emerald-600", timeout=10000)
+            except:
+                print("   ❌ Календарь не открылся.")
+                # Делаем скриншот, чтобы понять, где был фокус (браузер обычно рисует синюю рамку)
+                page.screenshot(path=f"focus_error_{city}.png")
+                return
 
         # --- ШАГ 4: ЧИТАЕМ ---
         prices_elements = page.locator(".text-emerald-600").all_inner_texts()
@@ -165,7 +174,7 @@ def run_search(page, city, country):
         except: pass
 
 def main():
-    print(f"🚀 VOLAGO JS-INJECT BOT: {datetime.now()}")
+    print(f"🚀 VOLAGO TAB-NAVIGATOR BOT: {datetime.now()}")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(
