@@ -15,6 +15,7 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 CITIES_FROM = ["Москва", "Санкт-Петербург", "Екатеринбург", "Сочи", "Самара", "Нижний Новгород", "Тюмень", "Новосибирск", "Казань", "Уфа"]
 COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд", "Дубай", "Китай", "Вьетнам", "Мальдивы", "Шри-Ланка"] 
 
+
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY and "http" in SUPABASE_URL:
     try:
@@ -62,81 +63,75 @@ def run_search(page, city, country):
     print(f"🔄 Поиск: {city} -> {country}")
     
     try:
-        # 1. Открываем сайт
+        # 1. Загрузка
         page.goto("https://www.onlinetours.ru/", timeout=60000)
         
-        # Сброс кликом в угол
-        try: page.mouse.click(0, 0)
-        except: pass
-
-        # --- ШАГ 1: ВВОДИМ "КУДА" ---
+        # --- ШАГ 1: ВВОДИМ СТРАНУ ---
         try:
-            # Ищем поле назначения
+            # Ищем input
             dest_input = page.locator("input[placeholder*='Страна']")
-            dest_input.click(force=True)
+            
+            # ЯДЕРНЫЙ КЛИК (JS): Принудительный клик программно
+            page.evaluate("element => element.click()", dest_input.element_handle())
+            
             dest_input.fill("")
             time.sleep(0.5)
             dest_input.type(country, delay=100)
-            time.sleep(2) # Ждем подсказку
+            time.sleep(2)
             page.keyboard.press("Enter")
             time.sleep(1)
-        except:
-            print("   ❌ Не удалось ввести страну")
+        except Exception as e:
+            print(f"   ❌ Ошибка ввода страны: {e}")
             return
 
-        # --- ШАГ 2: ОТКРЫВАЕМ КАЛЕНДАРЬ ---
-        print("   📅 Жму на календарь...")
+        # --- ШАГ 2: ОТКРЫВАЕМ КАЛЕНДАРЬ (JS INJECTION) ---
+        print("   📅 Взламываем кнопку календаря через JS...")
         
-        # Строго ищем кнопку даты
         try:
-            page.locator(".SearchPanel-date, .search-panel-date").first.click(force=True, timeout=5000)
-        except:
-            # Запасной вариант: клик по координатам, ЕСЛИ кнопка не сработала
-            print("   ⚠️ Клик по классу не прошел, пробую координаты...")
-            box = page.locator("input[placeholder*='Страна']").bounding_box()
-            if box:
-                page.mouse.click(box['x'] + box['width'] + 300, box['y'] + 10)
+            # Находим элемент даты
+            date_element = page.locator(".SearchPanel-date, .search-panel-date").first
+            
+            # ВЫПОЛНЯЕМ JS ПРЯМО В БРАУЗЕРЕ: "Нажмись!"
+            # Это обходит любые перекрытия
+            page.evaluate("element => element.click()", date_element.element_handle())
+            
+        except Exception as e:
+            print(f"   ⚠️ JS-клик не прошел: {e}")
+            # План Б: Клик по координатам (по центру экрана, так как поиск обычно сверху)
+            page.mouse.click(800, 200)
 
-        # --- ШАГ 3: ЖДЕМ ИМЕННО ЗЕЛЕНЫЕ ЦЕНЫ ---
-        # Мы НЕ ищем "любые цифры". Мы ждем только класс .text-emerald-600
-        print("   ⏳ Жду загрузки цен (до 15 сек)...")
-        
+        # --- ШАГ 3: ЖДЕМ ЗЕЛЕНЫЕ ЦЕНЫ ---
+        print("   ⏳ Жду цены...")
         try:
-            # Ждем появления хотя бы одного зеленого ценника
+            # Ждем появления класса .text-emerald-600
             page.wait_for_selector(".text-emerald-600", timeout=15000)
         except:
-            print("   ⚠️ Ценники не появились. Возможно, календарь не открылся.")
-            # Делаем скриншот для отладки (сохранится в Artifacts)
+            print("   ⚠️ Цены не загрузились.")
             page.screenshot(path=f"error_{city}_{country}.png")
             return
 
-        # --- ШАГ 4: ЧИТАЕМ ТОЛЬКО ЗЕЛЕНЫЕ ЦЕНЫ ---
-        # Берем текст только из элементов с нужным классом
-        price_elements = page.locator(".text-emerald-600").all_inner_texts()
+        # --- ШАГ 4: ЧИТАЕМ ---
+        prices_elements = page.locator(".text-emerald-600").all_inner_texts()
         
         valid_prices = []
-        for p in price_elements:
-            # p = "45 000 ₽"
+        for p in prices_elements:
             clean = re.sub(r'[^0-9]', '', p)
             if clean:
                 val = int(clean)
-                # Фильтр: Цена должна быть больше 15 000 (чтобы точно убрать рассрочки)
-                if val > 15000: 
-                    valid_prices.append(val)
+                if val > 15000: valid_prices.append(val)
         
         if not valid_prices:
-            print(f"   ⚠️ Найдены элементы цен, но они пустые или < 15к: {price_elements[:3]}")
+            print(f"   ⚠️ Цены пусты.")
             return
 
         min_price = min(valid_prices)
         print(f"   ✅ НАЙДЕНО: {min_price} руб.")
 
-        # --- ШАГ 5: БД И ТЕЛЕГРАМ ---
+        # --- ШАГ 5: БД ---
         last_price = get_last_price(city, country)
         
-        # ВАЖНО: Если цена странная (слишком маленькая), лучше проигнорировать
         if min_price < 12000:
-             print(f"   ⚠️ Цена подозрительно низкая ({min_price}), пропускаю.")
+             print(f"   ⚠️ Цена подозрительно низкая, скип.")
              return
 
         save_price(city, country, min_price)
@@ -154,7 +149,7 @@ def run_search(page, city, country):
                 )
                 send_telegram_message(msg)
             else:
-                 print(f"   ℹ️ Цена стабильна (было {last_price})")
+                 print(f"   ℹ️ Стабильно.")
         else:
             msg = (
                 f"🆕 <b>Найдена цена</b>\n"
@@ -170,7 +165,7 @@ def run_search(page, city, country):
         except: pass
 
 def main():
-    print(f"🚀 VOLAGO STRICT BOT: {datetime.now()}")
+    print(f"🚀 VOLAGO JS-INJECT BOT: {datetime.now()}")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(
