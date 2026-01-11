@@ -64,120 +64,124 @@ def run_search(page, city, country):
     try:
         # 1. Загрузка
         page.goto("https://www.onlinetours.ru/", timeout=60000)
-        # Клик в пустоту для фокуса
         try: page.mouse.click(0, 0)
         except: pass
 
         # ==========================================
-        # ШАГ 1: ГОРОД ВЫЛЕТА (Откуда)
+        # ШАГ 1: ГОРОД ВЫЛЕТА (Попытка смены)
         # ==========================================
+        # Пробуем сменить, если не выходит - работаем с тем что есть
         try:
-            # Ищем блок, где написан текущий город (Москва или Вылет из...)
-            # Класс .SearchPanel-departCity обычно держит этот текст
-            depart_btn = page.locator(".SearchPanel-departCity, .search-panel-depart-city").first
-            current_city_text = depart_btn.inner_text()
-            
-            # Если город не совпадает, меняем его
-            if city not in current_text:
-                print(f"   🛫 Меняю город на {city}...")
-                depart_btn.click(force=True)
-                
-                # Пишем город
-                # Важно: иногда поле ввода появляется внутри попапа, иногда прямо там
+            current_city_el = page.locator(".SearchPanel-departCity").first
+            if current_city_el.is_visible() and city not in current_city_el.inner_text():
+                print(f"   🛫 Пробую сменить город на {city}...")
+                current_city_el.click()
+                time.sleep(0.5)
                 page.keyboard.type(city, delay=100)
-                time.sleep(1.5) # Ждем пока сервер ответит подсказками
+                time.sleep(1.5)
                 
-                # --- ВЫБОР ИЗ СПИСКА (ПО ТВОЕМУ HTML) ---
-                # Ищем контейнер с классом z-50 (поверх всех)
-                # Внутри ищем элементы с cursor-pointer
-                dropdown_item = page.locator("div.absolute.z-50 div.cursor-pointer").first
-                
-                if dropdown_item.is_visible():
-                    print("      ✅ Вижу выпадающий список городов. Кликаю первый.")
-                    dropdown_item.click()
+                # Клик по выпадающему списку (z-50)
+                dropdown = page.locator("div.absolute.z-50 div.cursor-pointer").first
+                if dropdown.is_visible():
+                    dropdown.click()
                 else:
-                    print("      ⚠️ Список городов не появился. Жму Enter.")
+                    # Если списка нет, просто кликаем Enter и надеемся на лучшее
                     page.keyboard.press("Enter")
                 
                 time.sleep(1)
             else:
-                print(f"   ✅ Город {city} уже стоит.")
-                
-        except Exception as e:
-            print(f"   ⚠️ Ошибка смены города: {e}")
+                print(f"   ✅ Город {city} (или дефолтный) оставлен.")
+        except:
+            print("   ⚠️ Не удалось найти виджет города, пропускаю.")
 
         # ==========================================
-        # ШАГ 2: СТРАНА (Куда)
+        # ШАГ 2: СТРАНА (МЫШКОЙ ПО СПИСКУ)
         # ==========================================
         try:
-            print(f"   🌴 Выбираю страну: {country}...")
+            print(f"   🌴 Ввожу страну: {country}...")
             
-            # 1. Находим поле и кликаем
             dest_input = page.locator("input[placeholder*='Страна']")
             dest_input.click(force=True)
             
-            # 2. Очищаем и пишем
-            dest_input.fill("") 
-            time.sleep(0.2)
-            dest_input.type(country, delay=100)
-            time.sleep(2) # Ждем прогрузки списка
+            # Очистка и ввод
+            dest_input.press("Control+A")
+            dest_input.press("Backspace")
+            dest_input.type(country, delay=150) # Медленный ввод
             
-            # 3. --- ВЫБОР ИЗ СПИСКА (ПО ТВОЕМУ HTML) ---
-            # Твой HTML: <div class="absolute ... z-50 ..."> ... <div class="... cursor-pointer ...">
-            # Мы ищем первый элемент списка и кликаем.
-            
-            # Селектор: Найти div с z-50, внутри него найти div с cursor-pointer
-            dropdown_item = page.locator("div.absolute.z-50 div.cursor-pointer").first
-            
-            if dropdown_item.is_visible():
-                print(f"      👇 Кликаю по первой подсказке для '{country}'")
-                dropdown_item.click(force=True)
-            else:
-                print("      ⚠️ Список стран не выпал! Пробую Enter.")
-                page.keyboard.press("Enter")
+            # Ждем появления контейнера с классом z-50
+            print("      ⏳ Жду список...")
+            try:
+                # Ищем элемент, который ты прислал в HTML: div.z-50
+                page.wait_for_selector("div.z-50", state="visible", timeout=5000)
+            except:
+                print("      ⚠️ Список z-50 не появился.")
 
-            time.sleep(1)
+            # КЛИК ПО ЭЛЕМЕНТУ СПИСКА
+            # Ищем внутри z-50 элемент с cursor-pointer
+            item = page.locator("div.z-50 div.cursor-pointer").first
             
-            # 4. Сброс фокуса (Клик в шапку сайта), чтобы закрыть меню, если оно вдруг осталось
-            page.mouse.click(100, 10)
-            
+            if item.is_visible():
+                print("      🖱️ Кликаю мышкой по первой подсказке...")
+                item.click(force=True)
+                time.sleep(1)
+            else:
+                print("      ❌ Элемент списка не найден!")
+                page.screenshot(path=f"debug_list_{country}.png")
+                return
+
+            # Проверка: поле не должно быть пустым
+            if not dest_input.input_value():
+                print("   ❌ Поле очистилось после клика!")
+                return
+
         except Exception as e:
             print(f"   ❌ Ошибка ввода страны: {e}")
-            page.screenshot(path=f"err_country_{city}.png")
             return
 
         # ==========================================
-        # ШАГ 3: КАЛЕНДАРЬ
+        # ШАГ 3: ОТКРЫТИЕ КАЛЕНДАРЯ
         # ==========================================
         print("   📅 Открываю календарь...")
+        time.sleep(1) # Даем интерфейсу "остыть" после выбора страны
         
-        # Теперь, когда списки закрыты кликом по подсказке, календарь должен быть доступен.
+        calendar_opened = False
+        
+        # Попытка 1: По тексту "Дата" (универсально)
         try:
-            # Пробуем по классу
-            page.locator(".SearchPanel-date, .search-panel-date").first.click(force=True)
+            page.get_by_text("Дата вылета").first.click(force=True)
+            calendar_opened = True
         except:
-             # Если класса нет, кликаем аккуратно справа от поля ввода (как мы считали)
-             print("   ⚠️ Клик по классу даты не прошел. Кликаю рядом с полем Страны.")
-             box = page.locator("input[placeholder*='Страна']").bounding_box()
-             if box:
-                 # +20 пикселей от правого края поля "Страна" - это начало поля "Дата"
-                 page.mouse.click(box['x'] + box['width'] + 20, box['y'] + 20)
+            pass
+            
+        # Попытка 2: По классу (если текст не найден)
+        if not calendar_opened:
+            try:
+                page.locator(".SearchPanel-date, .search-panel-date").first.click(force=True)
+                calendar_opened = True
+            except:
+                pass
+        
+        # Попытка 3: Клик рядом с полем страны (аккуратно)
+        if not calendar_opened:
+            print("      ⚠️ Клик по тексту не прошел. Кликаю аккуратно справа.")
+            box = dest_input.bounding_box()
+            if box:
+                # Клик +20px от правого края поля страны
+                page.mouse.click(box['x'] + box['width'] + 20, box['y'] + 20)
 
         # ==========================================
         # ШАГ 4: ЦЕНЫ
         # ==========================================
-        print("   ⏳ Жду зеленые ценники...")
+        print("   ⏳ Жду цены...")
         try:
-            # Ждем появления класса .text-emerald-600
             page.wait_for_selector(".text-emerald-600", timeout=15000)
         except:
             print("   ⚠️ Цены не появились.")
-            page.screenshot(path=f"err_calendar_{country}.png")
+            page.screenshot(path=f"fail_prices_{country}.png")
             return
 
         # Парсинг
         prices_elements = page.locator(".text-emerald-600").all_inner_texts()
-        
         valid_prices = []
         for p in prices_elements:
             clean = re.sub(r'[^0-9]', '', p)
@@ -196,14 +200,10 @@ def run_search(page, city, country):
         # ШАГ 5: СОХРАНЕНИЕ
         # ==========================================
         last_price = get_last_price(city, country)
-        
-        if min_price < 12000:
-             print(f"   ⚠️ Цена подозрительно низкая, скип.")
-             return
-
         save_price(city, country, min_price)
-        current_url = page.url
         
+        if min_price < 10000: return # Защита от багов
+
         if last_price:
             if min_price < last_price:
                 diff = last_price - min_price
@@ -211,8 +211,7 @@ def run_search(page, city, country):
                     f"📉 <b>ЦЕНА УПАЛА!</b>\n"
                     f"✈️ {city} -> {country}\n"
                     f"💰 <b>{min_price:,} руб.</b> (было {last_price:,})\n"
-                    f"📉 Скидка: {diff} руб.\n"
-                    f"🔗 <a href='{current_url}'>На сайт</a>"
+                    f"📉 Скидка: {diff} руб."
                 )
                 send_telegram_message(msg)
             else:
@@ -221,8 +220,7 @@ def run_search(page, city, country):
             msg = (
                 f"🆕 <b>Найдена цена</b>\n"
                 f"✈️ {city} -> {country}\n"
-                f"💰 <b>{min_price:,} руб.</b>\n"
-                f"🔗 <a href='{current_url}'>На сайт</a>"
+                f"💰 <b>{min_price:,} руб.</b>"
             )
             send_telegram_message(msg)
 
@@ -232,15 +230,13 @@ def run_search(page, city, country):
         except: pass
 
 def main():
-    print(f"🚀 VOLAGO DROPDOWN-HUNTER: {datetime.now()}")
-    
+    print(f"🚀 VOLAGO MOUSE-CLICKER: {datetime.now()}")
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox']
         )
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
-        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
         page = context.new_page()
 
         for city in CITIES_FROM:
