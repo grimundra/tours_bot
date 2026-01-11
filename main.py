@@ -12,6 +12,17 @@ TELEGRAM_CHANNEL_ID = os.getenv('TG_CHAT_ID')
 CITIES_FROM = ["Москва", "Санкт-Петербург"]
 COUNTRIES_TO = ["Турция", "Египет", "ОАЭ", "Таиланд"] 
 
+# Словарик флагов для красоты
+FLAGS = {
+    "Турция": "🇹🇷",
+    "Египет": "🇪🇬",
+    "ОАЭ": "🇦🇪",
+    "Таиланд": "🇹🇭",
+    "Куба": "🇨🇺",
+    "Мальдивы": "🇲🇻",
+    "Шри-Ланка": "🇱🇰"
+}
+
 # --- ФУНКЦИИ ---
 
 def send_telegram_message(text):
@@ -22,8 +33,8 @@ def send_telegram_message(text):
         requests.post(url, json=payload, timeout=10)
     except: pass
 
-def run_search(page, city, country):
-    print(f"🔄 Поиск: {city} -> {country}")
+def run_search(page, target_city, target_country):
+    print(f"🔄 Поиск: {target_city} -> {target_country}")
     
     try:
         # 1. Загрузка
@@ -32,81 +43,95 @@ def run_search(page, city, country):
         except: pass
 
         # ==========================================
-        # ШАГ 1: ГОРОД ВЫЛЕТА (Mouse Clicker Logic)
+        # ШАГ 1: ГОРОД ВЫЛЕТА
         # ==========================================
         try:
-            # Находим кнопку текущего города
-            depart_btn = page.locator(".SearchPanel-departCity, .search-panel-depart-city").first
-            current_text = depart_btn.inner_text()
+            city_changed = False
             
-            # Если город уже стоит верный - не трогаем
-            if city in current_text:
-                 print(f"   ✅ Город {city} уже стоит.")
-            else:
-                print(f"   🛫 Меняю город: {current_text} -> {city}...")
-                depart_btn.click(force=True)
-                
-                # ВАЖНО: После клика фокус падает в поле ввода.
-                # Чистим старое (Ctrl+A -> Backspace) и пишем новое
-                page.keyboard.press("Control+A")
-                page.keyboard.press("Backspace")
-                time.sleep(0.1)
-                
-                # Медленная печать (чтобы React успел понять)
-                page.keyboard.type(city, delay=150)
-                time.sleep(1.5) # Ждем список
-                
-                # Ждем список z-50
-                try:
-                    # Ищем контейнер списка
-                    page.wait_for_selector("div.z-50", state="visible", timeout=5000)
+            # 1. Проверяем, какой город сейчас стоит.
+            # Ищем текст "Москва" или "Санкт-Петербург" на странице.
+            # Используем first, чтобы взять первое совпадение (обычно это кнопка в шапке).
+            
+            # Список слов-триггеров, которые могут быть кнопкой
+            triggers = ["Москва", "Санкт-Петербург", target_city]
+            
+            found_btn = None
+            current_val = "Неизвестно"
+
+            for trigger in triggers:
+                # exact=False делает поиск мягче (найдет "Москва " с пробелом)
+                btn = page.get_by_text(trigger, exact=False).first
+                if btn.is_visible():
+                    found_btn = btn
+                    current_val = trigger
+                    break
+            
+            # Логика смены
+            if found_btn:
+                # Если найденный текст НЕ содержит нужный нам город
+                if target_city not in current_val:
+                    print(f"   🛫 Меняю город: {current_val} -> {target_city}...")
+                    found_btn.click(force=True)
                     
-                    # Ищем кликабельный элемент внутри
-                    item = page.locator("div.z-50 div.cursor-pointer").first
-                    if item.is_visible():
-                        item.click(force=True)
-                        print("      🖱️ Кликнул по городу в списке.")
-                    else:
-                        print("      ⚠️ Элемент списка города не виден. Жму Enter.")
+                    # Очистка и ввод
+                    page.keyboard.press("Control+A")
+                    page.keyboard.press("Backspace")
+                    time.sleep(0.1)
+                    page.keyboard.type(target_city, delay=150)
+                    
+                    # Выбор из списка (z-50)
+                    try:
+                        page.wait_for_selector("div.z-50", state="visible", timeout=4000)
+                        item = page.locator("div.z-50 div.cursor-pointer").first
+                        if item.is_visible():
+                            item.click(force=True)
+                            print("      🖱️ Кликнул по городу в списке.")
+                        else:
+                            page.keyboard.press("Enter")
+                    except:
+                        page.keyboard.press("Enter")
+                    
+                    time.sleep(1)
+                else:
+                    print(f"   ✅ Город {target_city} уже стоит.")
+            else:
+                # Если не нашли текст, пробуем резервный класс (на всякий случай)
+                try:
+                    alt_btn = page.locator(".SearchPanel-departCity").first
+                    if alt_btn.is_visible():
+                        alt_btn.click(force=True)
+                        page.keyboard.type(target_city, delay=100)
                         page.keyboard.press("Enter")
                 except:
-                    print("      ⚠️ Список городов (z-50) не появился. Жму Enter.")
-                    page.keyboard.press("Enter")
-                
-                time.sleep(1)
+                    print("   ⚠️ Не нашел кнопку города. Оставляю как есть.")
 
         except Exception as e:
             print(f"   ⚠️ Ошибка смены города: {e}")
 
         # ==========================================
-        # ШАГ 2: СТРАНА (Mouse Clicker Logic)
+        # ШАГ 2: СТРАНА
         # ==========================================
         try:
-            print(f"   🌴 Ввожу страну: {country}...")
+            print(f"   🌴 Ввожу страну: {target_country}...")
             dest_input = page.locator("input[placeholder*='Страна']")
             dest_input.click(force=True)
             
             dest_input.press("Control+A")
             dest_input.press("Backspace")
-            dest_input.type(country, delay=150)
+            dest_input.type(target_country, delay=150)
             
-            # Ждем список
             try:
                 page.wait_for_selector("div.z-50", state="visible", timeout=5000)
-                
                 item = page.locator("div.z-50 div.cursor-pointer").first
                 if item.is_visible():
                     item.click(force=True)
-                    # print("      🖱️ Страна выбрана.")
                 else:
-                    print("      ⚠️ Элемент списка стран не найден! (Пробую Enter)")
                     page.keyboard.press("Enter")
             except:
-                pass
+                pass # Если списка нет, надеемся что текст ввелся
 
             time.sleep(1)
-            # Клик в пустоту (закрыть меню наверняка)
-            page.mouse.click(100, 10)
+            page.mouse.click(100, 10) # Закрыть меню
 
         except Exception as e:
             print(f"   ❌ Ошибка ввода страны: {e}")
@@ -118,20 +143,17 @@ def run_search(page, city, country):
         print("   📅 Открываю календарь...")
         calendar_opened = False
         
-        # 1. Пробуем по тексту
         try:
             page.get_by_text("Дата вылета").first.click(force=True)
             calendar_opened = True
         except: pass
             
-        # 2. Пробуем по классу
         if not calendar_opened:
             try:
                 page.locator(".SearchPanel-date, .search-panel-date").first.click(force=True)
                 calendar_opened = True
             except: pass
         
-        # 3. План Б (координаты)
         if not calendar_opened:
             print("      ⚠️ Клик по дате через координаты (План Б).")
             box = page.locator("input[placeholder*='Страна']").bounding_box()
@@ -139,29 +161,22 @@ def run_search(page, city, country):
                 page.mouse.click(box['x'] + box['width'] + 20, box['y'] + 20)
 
         # ==========================================
-        # ШАГ 4: ЦЕНЫ + ФОТО
+        # ШАГ 4: ЦЕНЫ
         # ==========================================
         print("   ⏳ Жду цены...")
         try:
             page.wait_for_selector(".text-emerald-600", timeout=15000)
         except:
             print("   ⚠️ Цены не появились.")
-            # Делаем скриншот ошибки
-            page.screenshot(path=f"FAIL_{city}_{country}.png")
             return
 
-        # Делаем скриншот УСПЕХА (чтобы проверить город)
-        screenshot_name = f"OK_{city}_{country}.png"
-        page.screenshot(path=screenshot_name)
-        
-        # Парсинг
         prices_elements = page.locator(".text-emerald-600").all_inner_texts()
         valid_prices = []
         for p in prices_elements:
             clean = re.sub(r'[^0-9]', '', p)
             if clean:
                 val = int(clean)
-                if val > 10000: valid_prices.append(val) # Фильтр мусора
+                if val > 10000: valid_prices.append(val)
         
         if not valid_prices:
             print(f"   ⚠️ Цены пусты.")
@@ -171,27 +186,24 @@ def run_search(page, city, country):
         print(f"   ✅ НАЙДЕНО: {min_price} руб.")
 
         # ==========================================
-        # ШАГ 5: ОТПРАВКА В TELEGRAM (ВСЕГДА)
+        # ШАГ 5: ОТПРАВКА В TELEGRAM (КРАСИВО)
         # ==========================================
-        # Теперь мы не сравниваем с БД, а просто шлем самое дешевое
-        current_url = page.url
+        
+        flag = FLAGS.get(target_country, "🏳️") # Берем флаг или белый флаг если нет
+        
         msg = (
-            f"🔥 <b>Минимальная цена</b>\n"
-            f"✈️ {city} -> {country}\n"
-            f"💰 <b>{min_price:,} руб.</b>\n"
-            f"📅 Скриншот: {screenshot_name}\n"
-            f"🔗 <a href='{current_url}'>Проверить на сайте</a>"
+            f"{flag} <b>{target_country}</b>\n"
+            f"🛫 Вылет: {target_city}\n"
+            f"💰 <b>{min_price:,} руб.</b>"
         )
         send_telegram_message(msg)
         print("   📩 Отправлено в Telegram")
 
     except Exception as e:
         print(f"   ❌ Ошибка: {e}")
-        try: page.screenshot(path=f"crash_{city}.png")
-        except: pass
 
 def main():
-    print(f"🚀 VOLAGO NO-DB BOT: {datetime.now()}")
+    print(f"🚀 VOLAGO FINAL: {datetime.now()}")
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -203,7 +215,6 @@ def main():
         for city in CITIES_FROM:
             for country in COUNTRIES_TO:
                 run_search(page, city, country)
-                # Пауза между запросами
                 time.sleep(3)
 
         browser.close()
