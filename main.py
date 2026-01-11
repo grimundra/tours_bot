@@ -68,117 +68,116 @@ def run_search(page, city, country):
         except: pass
 
         # ==========================================
-        # ШАГ 1: ГОРОД ВЫЛЕТА (Попытка смены)
+        # ШАГ 1: ГОРОД ВЫЛЕТА (Mouse Clicker Logic)
         # ==========================================
-        # Пробуем сменить, если не выходит - работаем с тем что есть
+        # Применяем ту же логику, что сработала для Страны
         try:
-            current_city_el = page.locator(".SearchPanel-departCity").first
-            if current_city_el.is_visible() and city not in current_city_el.inner_text():
-                print(f"   🛫 Пробую сменить город на {city}...")
-                current_city_el.click()
-                time.sleep(0.5)
+            depart_btn = page.locator(".SearchPanel-departCity, .search-panel-depart-city").first
+            current_text = depart_btn.inner_text()
+            
+            # Если город не совпадает - меняем ЖЕСТКО
+            if city not in current_text:
+                print(f"   🛫 Меняю город: {current_text} -> {city}...")
+                depart_btn.click(force=True)
+                
+                # Ищем поле ввода (оно может быть внутри виджета)
+                # Иногда нужно кликнуть еще раз или просто начать печатать
                 page.keyboard.type(city, delay=100)
                 time.sleep(1.5)
                 
-                # Клик по выпадающему списку (z-50)
-                dropdown = page.locator("div.absolute.z-50 div.cursor-pointer").first
-                if dropdown.is_visible():
-                    dropdown.click()
-                else:
-                    # Если списка нет, просто кликаем Enter и надеемся на лучшее
+                # Ждем список z-50
+                try:
+                    page.wait_for_selector("div.z-50", state="visible", timeout=3000)
+                    # Клик по первой подсказке
+                    page.locator("div.z-50 div.cursor-pointer").first.click()
+                    print("      🖱️ Кликнул по городу в списке.")
+                except:
+                    print("      ⚠️ Список городов не выпал, жму Enter.")
                     page.keyboard.press("Enter")
                 
                 time.sleep(1)
             else:
-                print(f"   ✅ Город {city} (или дефолтный) оставлен.")
-        except:
-            print("   ⚠️ Не удалось найти виджет города, пропускаю.")
+                print(f"   ✅ Город {city} уже стоит.")
+        except Exception as e:
+            print(f"   ⚠️ Ошибка смены города: {e}")
 
         # ==========================================
-        # ШАГ 2: СТРАНА (МЫШКОЙ ПО СПИСКУ)
+        # ШАГ 2: СТРАНА (Mouse Clicker Logic)
         # ==========================================
         try:
             print(f"   🌴 Ввожу страну: {country}...")
-            
             dest_input = page.locator("input[placeholder*='Страна']")
             dest_input.click(force=True)
             
-            # Очистка и ввод
             dest_input.press("Control+A")
             dest_input.press("Backspace")
-            dest_input.type(country, delay=150) # Медленный ввод
+            dest_input.type(country, delay=150)
             
-            # Ждем появления контейнера с классом z-50
-            print("      ⏳ Жду список...")
+            # Ждем список
             try:
-                # Ищем элемент, который ты прислал в HTML: div.z-50
                 page.wait_for_selector("div.z-50", state="visible", timeout=5000)
             except:
-                print("      ⚠️ Список z-50 не появился.")
+                pass
 
-            # КЛИК ПО ЭЛЕМЕНТУ СПИСКА
-            # Ищем внутри z-50 элемент с cursor-pointer
+            # Клик по подсказке
             item = page.locator("div.z-50 div.cursor-pointer").first
-            
             if item.is_visible():
-                print("      🖱️ Кликаю мышкой по первой подсказке...")
                 item.click(force=True)
-                time.sleep(1)
+                # print("      🖱️ Страна выбрана.")
             else:
-                print("      ❌ Элемент списка не найден!")
-                page.screenshot(path=f"debug_list_{country}.png")
-                return
+                print("      ⚠️ Элемент списка стран не найден! (Пробую Enter)")
+                page.keyboard.press("Enter")
 
-            # Проверка: поле не должно быть пустым
-            if not dest_input.input_value():
-                print("   ❌ Поле очистилось после клика!")
-                return
+            time.sleep(1)
+            
+            # Клик в пустоту (закрыть меню)
+            page.mouse.click(100, 10)
 
         except Exception as e:
             print(f"   ❌ Ошибка ввода страны: {e}")
             return
 
         # ==========================================
-        # ШАГ 3: ОТКРЫТИЕ КАЛЕНДАРЯ
+        # ШАГ 3: КАЛЕНДАРЬ
         # ==========================================
         print("   📅 Открываю календарь...")
-        time.sleep(1) # Даем интерфейсу "остыть" после выбора страны
-        
         calendar_opened = False
         
-        # Попытка 1: По тексту "Дата" (универсально)
+        # Пробуем кликнуть по тексту "Дата"
         try:
             page.get_by_text("Дата вылета").first.click(force=True)
             calendar_opened = True
         except:
-            pass
-            
-        # Попытка 2: По классу (если текст не найден)
-        if not calendar_opened:
+            # Если не вышло, пробуем старый класс
             try:
-                page.locator(".SearchPanel-date, .search-panel-date").first.click(force=True)
+                page.locator(".SearchPanel-date").first.click(force=True)
                 calendar_opened = True
             except:
                 pass
         
-        # Попытка 3: Клик рядом с полем страны (аккуратно)
+        # Если совсем всё плохо - кликаем справа от поля ввода
         if not calendar_opened:
-            print("      ⚠️ Клик по тексту не прошел. Кликаю аккуратно справа.")
-            box = dest_input.bounding_box()
+            print("      ⚠️ Клик по дате через координаты (План Б).")
+            box = page.locator("input[placeholder*='Страна']").bounding_box()
             if box:
-                # Клик +20px от правого края поля страны
                 page.mouse.click(box['x'] + box['width'] + 20, box['y'] + 20)
 
         # ==========================================
-        # ШАГ 4: ЦЕНЫ
+        # ШАГ 4: ЦЕНЫ + ФОТО-ДОКАЗАТЕЛЬСТВО
         # ==========================================
-        print("   ⏳ Жду цены...")
+        print("   ⏳ Жду зеленые ценники...")
         try:
             page.wait_for_selector(".text-emerald-600", timeout=15000)
         except:
             print("   ⚠️ Цены не появились.")
-            page.screenshot(path=f"fail_prices_{country}.png")
+            page.screenshot(path=f"FAIL_{city}_{country}.png")
             return
+
+        # --- ДЕЛАЕМ СКРИНШОТ УСПЕХА ---
+        # Чтобы ты увидел глазами, что там происходит
+        screenshot_name = f"OK_{city}_{country}.png"
+        page.screenshot(path=screenshot_name)
+        print(f"   📸 Скриншот сохранен: {screenshot_name}")
 
         # Парсинг
         prices_elements = page.locator(".text-emerald-600").all_inner_texts()
@@ -187,7 +186,7 @@ def run_search(page, city, country):
             clean = re.sub(r'[^0-9]', '', p)
             if clean:
                 val = int(clean)
-                if val > 15000: valid_prices.append(val)
+                if val > 10000: valid_prices.append(val) # Фильтр 10к (защита от мусора)
         
         if not valid_prices:
             print(f"   ⚠️ Цены пусты.")
@@ -202,8 +201,6 @@ def run_search(page, city, country):
         last_price = get_last_price(city, country)
         save_price(city, country, min_price)
         
-        if min_price < 10000: return # Защита от багов
-
         if last_price:
             if min_price < last_price:
                 diff = last_price - min_price
@@ -230,7 +227,7 @@ def run_search(page, city, country):
         except: pass
 
 def main():
-    print(f"🚀 VOLAGO MOUSE-CLICKER: {datetime.now()}")
+    print(f"🚀 VOLAGO DEBUG & FIX: {datetime.now()}")
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
