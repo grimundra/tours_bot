@@ -185,7 +185,7 @@ def run_search(page, target_city, target_country, history):
                 if val > 10000: valid_prices.append(val)
         
         if not valid_prices: return
-
+        min_price = min(valid_prices)
         # ==========================================
         # ШАГ 5: СРАВНЕНИЕ, ЛИМИТЫ И ОТПРАВКА
         # ==========================================
